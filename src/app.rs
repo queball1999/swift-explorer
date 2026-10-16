@@ -181,7 +181,7 @@ enum Action {
     InvertSelection,
     CopyPath,
     Terminal(PathBuf),
-    RunTerminal { name: String, args: String, dir: PathBuf },
+    RunTerminal { name: String, args: String, dir: PathBuf, elevated: bool },
     Properties(PathBuf),
     ShowInExplorer(PathBuf),
     OpenWith(PathBuf),
@@ -1674,8 +1674,8 @@ impl App {
             Action::Terminal(p) => {
                 win::open_terminal(&p);
             }
-            Action::RunTerminal { name, args, dir } => {
-                if !win::run_terminal(&name, &args, &dir) {
+            Action::RunTerminal { name, args, dir, elevated } => {
+                if !win::run_terminal(&name, &args, &dir, elevated) {
                     self.toast(crate::i18n::tf("{} başlatılamadı", &[&name]), true);
                 }
             }
@@ -2102,6 +2102,7 @@ impl App {
         if self.address_edit.is_some() {
             let mut navigate_to: Option<PathBuf> = None;
             let mut entered: Option<String> = None;
+            let mut elevated = false;
             let mut close = false;
             let out = frame.show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -2120,6 +2121,8 @@ impl App {
                     if out.response.lost_focus() {
                         if ui.input(|i| i.key_pressed(Key::Enter)) {
                             entered = Some(text.trim().trim_matches('"').to_string());
+                            // Ctrl+Shift+Enter: Explorer'daki gibi yönetici olarak aç
+                            elevated = ui.input(|i| i.modifiers.ctrl && i.modifiers.shift);
                         }
                         close = true;
                     }
@@ -2131,9 +2134,9 @@ impl App {
             if let Some(s) = entered {
                 // "cmd", "powershell", "terminal"…: aynı adda bir alt klasör yoksa o klasörde terminal aç
                 let dir = if self.tab().is_home() { dirs::home_dir().unwrap_or_default() } else { self.tab().path.clone() };
-                let (name, args) = s.split_once(char::is_whitespace).map_or((s.as_str(), ""), |(n, a)| (n, a.trim()));
+                let (name, args) = split_command(&s);
                 if win::is_terminal(name) && !dir.join(&s).is_dir() {
-                    actions.push(Action::RunTerminal { name: name.to_string(), args: args.to_string(), dir });
+                    actions.push(Action::RunTerminal { name: name.to_string(), args: args.to_string(), dir, elevated });
                 } else {
                     navigate_to = Some(expand_path(&s));
                 }
@@ -4282,5 +4285,23 @@ impl eframe::App for App {
             t.cancel_search();
         }
         self.save_config();
+    }
+}
+
+/// Adres çubuğu metnini komut adı ve argümanlarına ayırır
+fn split_command(s: &str) -> (&str, &str) {
+    s.split_once(char::is_whitespace).map_or((s, ""), |(n, a)| (n, a.trim()))
+}
+
+#[cfg(test)]
+mod address_bar_tests {
+    use super::split_command;
+
+    #[test]
+    fn splits_name_and_args() {
+        assert_eq!(split_command("cmd"), ("cmd", ""));
+        assert_eq!(split_command("powershell -NoExit"), ("powershell", "-NoExit"));
+        assert_eq!(split_command("cmd   /k  dir "), ("cmd", "/k  dir"));
+        assert_eq!(split_command("cmd.exe /c"), ("cmd.exe", "/c"));
     }
 }

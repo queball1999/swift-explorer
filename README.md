@@ -37,7 +37,7 @@ Releases after 0.2.0 also include `swift-explorer.flatpak`, which installs with 
 - Uses Windows' own icons, thumbnails and file type names.
 - Every Explorer shortcut works the same way. Press F1 for the full list.
 - Typing in the search box filters the current folder instantly. Press Enter to search all subfolders; `*` and `?` wildcards work.
-- Typing `cmd`, `powershell`, `pwsh` or `wt` in the address bar opens that terminal in the current folder, and `terminal` opens Windows Terminal. On Linux, `terminal` opens your default terminal, and a terminal's name (`konsole`, `kitty`…) opens that one.
+- Typing `cmd`, `powershell`, `pwsh` or `wt` in the address bar opens that terminal in the current folder, and `terminal` opens Windows Terminal. Press Ctrl+Shift+Enter instead of Enter to run it as administrator. On Linux, `terminal`, `cmd`, `powershell` and `pwsh` open your default terminal, and a terminal's name (`konsole`, `kitty`…) opens that one.
 - Copy, cut, paste and drag and drop work in both directions with Explorer and the desktop.
 - Shift + right-click opens the full Windows context menu, so 7-Zip, WinRAR and Send to are there.
 - Ctrl+Z undoes renames, moves, copies and deletes to the Recycle Bin.
