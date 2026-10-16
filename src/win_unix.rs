@@ -155,22 +155,68 @@ fn host_has(program: &str) -> bool {
     !in_flatpak() || host_command("sh").args(["-c", "command -v \"$1\" >/dev/null", "sh", program]).status().is_ok_and(|s| s.success())
 }
 
+/// Program gerçekten kurulu mu (`host_has`'tan farkı: Flatpak dışında da PATH'e bakar)
+fn installed(program: &str) -> bool {
+    if in_flatpak() {
+        return host_has(program);
+    }
+    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(program).is_file()))
+}
+
 const TERMINALS: [&str; 11] = ["x-terminal-emulator", "gnome-terminal", "kgx", "ptyxis", "konsole", "xfce4-terminal", "kitty", "alacritty", "foot", "wezterm", "xterm"];
 
 pub fn open_terminal(dir: &Path) -> bool {
+    open_terminal_with(dir, &[])
+}
+
+/// Terminal emülatörünün "şu komutu çalıştır" bayrağı
+fn exec_flags(terminal: &str) -> &'static [&'static str] {
+    match terminal.rsplit('/').next().unwrap_or(terminal) {
+        "gnome-terminal" | "kgx" | "ptyxis" => &["--"],
+        "xfce4-terminal" => &["-x"],
+        "wezterm" => &["start", "--"],
+        _ => &["-e"],
+    }
+}
+
+/// Varsayılan terminali `dir` klasöründe açar; `command` doluysa kabuk yerine onu çalıştırır
+fn open_terminal_with(dir: &Path, command: &[&str]) -> bool {
     let mut candidates: Vec<String> = std::env::var("TERMINAL").into_iter().collect();
     candidates.extend(TERMINALS.map(String::from));
-    candidates.iter().any(|c| host_has(c) && host_command_in(c, Some(dir)).spawn().is_ok())
+    candidates.iter().any(|c| {
+        if !host_has(c) {
+            return false;
+        }
+        let mut cmd = host_command_in(c, Some(dir));
+        if !command.is_empty() {
+            cmd.args(exec_flags(c)).args(command);
+        }
+        cmd.spawn().is_ok()
+    })
 }
 
-/// Adres çubuğuna yazılınca o klasörde açılan terminaller: "terminal" varsayılanı açar
+/// Windows'taki adres çubuğu takma adları: varsayılan terminali açar
+/// ("powershell" ve "pwsh" kuruluysa PowerShell'i açar)
+const TERMINAL_ALIASES: [&str; 4] = ["terminal", "cmd", "powershell", "pwsh"];
+
+/// Adres çubuğuna yazılınca o klasörde açılan terminaller: "terminal", "cmd", "powershell"
+/// ve "pwsh" varsayılanı açar
 pub fn is_terminal(name: &str) -> bool {
-    name == "terminal" || TERMINALS.contains(&name) || std::env::var("TERMINAL").is_ok_and(|t| t == name)
+    TERMINAL_ALIASES.contains(&name) || TERMINALS.contains(&name) || std::env::var("TERMINAL").is_ok_and(|t| t == name)
 }
 
-/// `name` terminalini `dir` klasöründe, varsa `args` ile başlatır
-pub fn run_terminal(name: &str, args: &str, dir: &Path) -> bool {
-    if name == "terminal" {
+/// `name` terminalini `dir` klasöründe, varsa `args` ile başlatır.
+/// `elevated` yok sayılır: Ctrl+Shift+Enter burada Enter gibi davranır.
+pub fn run_terminal(name: &str, args: &str, dir: &Path, _elevated: bool) -> bool {
+    if matches!(name, "powershell" | "pwsh") && installed("pwsh") {
+        // PowerShell kuruluysa varsayılan kabuk yerine onu aç
+        let mut command = vec!["pwsh"];
+        command.extend(args.split_whitespace());
+        if open_terminal_with(dir, &command) {
+            return true;
+        }
+    }
+    if TERMINAL_ALIASES.contains(&name) {
         return open_terminal(dir);
     }
     host_has(name) && host_command_in(name, Some(dir)).args(args.split_whitespace()).spawn().is_ok()

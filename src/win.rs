@@ -6,6 +6,7 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use windows_sys::Win32::Foundation::GetLastError;
 use windows_sys::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
 };
@@ -134,8 +135,45 @@ pub fn is_terminal(name: &str) -> bool {
     TERMINALS.contains(&name.strip_suffix(".exe").unwrap_or(&name))
 }
 
-/// `name` terminalini `dir` klasöründe, varsa `args` ile başlatır
-pub fn run_terminal(name: &str, args: &str, dir: &Path) -> bool {
+/// `ShellExecuteExW` "runas" ile yönetici olarak başlatır (UAC istemi çıkar).
+/// Kullanıcı UAC'yi iptal ederse hata sayılmaz.
+fn run_elevated(exe: &str, params: &str, dir: &Path) -> bool {
+    const ERROR_CANCELLED: u32 = 1223;
+    let verb = wide(OsStr::new("runas"));
+    let file = wide(OsStr::new(exe));
+    let params = wide(OsStr::new(params));
+    let dir = wide(dir.as_os_str());
+    unsafe {
+        let mut info: SHELLEXECUTEINFOW = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+        info.lpVerb = verb.as_ptr();
+        info.lpFile = file.as_ptr();
+        info.lpParameters = params.as_ptr();
+        info.lpDirectory = dir.as_ptr();
+        info.nShow = 1; // SW_SHOWNORMAL
+        ShellExecuteExW(&mut info) != 0 || GetLastError() == ERROR_CANCELLED
+    }
+}
+
+fn run_terminal_elevated(name: &str, args: &str, dir: &Path) -> bool {
+    let lower = name.to_lowercase();
+    let lower = lower.strip_suffix(".exe").unwrap_or(&lower);
+    if lower == "wt" || lower == "terminal" {
+        let params = format!("-d \"{}\" {args}", dir.display());
+        if run_elevated("wt.exe", params.trim_end(), dir) {
+            return true;
+        }
+        return lower == "terminal" && run_elevated("powershell.exe", args, dir);
+    }
+    run_elevated(&format!("{lower}.exe"), args, dir)
+}
+
+/// `name` terminalini `dir` klasöründe, varsa `args` ile başlatır;
+/// `elevated` ise yönetici olarak (UAC istemiyle)
+pub fn run_terminal(name: &str, args: &str, dir: &Path, elevated: bool) -> bool {
+    if elevated {
+        return run_terminal_elevated(name, args, dir);
+    }
     if name.eq_ignore_ascii_case("terminal") {
         open_terminal(dir);
         return true;
