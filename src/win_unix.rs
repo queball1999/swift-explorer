@@ -75,7 +75,7 @@ pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
     Some((st.f_bavail as u64 * frsize, st.f_blocks as u64 * frsize))
 }
 
-fn file_uri(p: &Path) -> String {
+pub fn file_uri(p: &Path) -> String {
     use std::os::unix::ffi::OsStrExt;
     let mut s = String::from("file://");
     for &b in p.as_os_str().as_bytes() {
@@ -123,13 +123,9 @@ pub fn default_app_id(mime: &str) -> Option<String> {
 /// Dosya türünü açan varsayılan uygulama: `xdg-mime` ile bulunur, adı `.desktop` dosyasından okunur
 pub fn default_app(path: &Path) -> Option<crate::properties::AppInfo> {
     let mime = mime_of(path)?;
-    let id = default_app_id(&mime)?;
+    let id = crate::desktop_apps::default_for(&mime)?;
     let name = crate::desktop_apps::app_name(&id).unwrap_or_else(|| id.trim_end_matches(".desktop").to_string());
     Some(crate::properties::AppInfo { name, exe: None })
-}
-
-pub fn open_with(path: &Path) {
-    let _ = open::that_detached(path);
 }
 
 pub fn show_in_explorer(path: &Path) {
@@ -141,7 +137,7 @@ pub fn show_in_explorer(path: &Path) {
 }
 
 /// Flatpak sandbox'ında mı: host'taki programlar orada doğrudan görünmez
-fn in_flatpak() -> bool {
+pub fn in_flatpak() -> bool {
     static FLATPAK: OnceLock<bool> = OnceLock::new();
     *FLATPAK.get_or_init(|| Path::new("/.flatpak-info").exists())
 }
@@ -151,7 +147,7 @@ pub fn host_command(program: &str) -> Command {
     host_command_in(program, None)
 }
 
-fn host_command_in(program: &str, dir: Option<&Path>) -> Command {
+pub fn host_command_in(program: &str, dir: Option<&Path>) -> Command {
     if in_flatpak() {
         let mut c = Command::new("flatpak-spawn");
         c.arg("--host");

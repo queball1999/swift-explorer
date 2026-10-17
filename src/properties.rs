@@ -623,13 +623,7 @@ impl Properties {
         }
         #[cfg(not(windows))]
         {
-            let data = spawn_load(ctx, move || {
-                let mime = crate::win::mime_of(&p).unwrap_or_default();
-                let current = crate::win::default_app_id(&mime);
-                let (recommended, other) = crate::desktop_apps::installed_apps().into_iter().partition(|a| a.mimes.contains(&mime));
-                ChooserData { mime, current, recommended, other }
-            });
-            self.chooser = Some(Chooser { data, selected: None, pos: None, synced: false, scroll_pending: false, icons: Default::default() });
+            self.chooser = Some(Chooser::new(p, ctx, false));
         }
     }
 
@@ -640,7 +634,7 @@ impl Properties {
         match show_chooser(ch, ctx, &ext) {
             ChooserEvent::None => {}
             ChooserEvent::Cancel => self.chooser = None,
-            ChooserEvent::Pick { id, mime } => {
+            ChooserEvent::Pick { id, mime, .. } => {
                 self.chooser = None;
                 let p = self.paths[0].clone();
                 self.opens_with = Some(spawn_load(ctx, move || {
@@ -876,7 +870,7 @@ struct ChooserData {
 }
 
 #[cfg(not(windows))]
-struct Chooser {
+pub struct Chooser {
     data: Shared<ChooserData>,
     selected: Option<String>,
     pos: Option<egui::Pos2>,
@@ -885,18 +879,42 @@ struct Chooser {
     scroll_pending: bool,
     /// Uygulama kimliğine göre ikon dokuları; görünür satırlar için tembelce yüklenir
     icons: std::collections::HashMap<String, Option<egui::TextureHandle>>,
+    /// "Birlikte aç" menüsünden: seçilen uygulama dosyayı bir kez açar, isteğe bağlı varsayılan olur
+    open_once: bool,
+    /// "Bu tür dosyalar için her zaman bu uygulamayı kullan"
+    always: bool,
 }
 
 #[cfg(not(windows))]
-enum ChooserEvent {
+impl Chooser {
+    /// Önerilenler dosya türünü açabilen uygulamalar; terminal programları yalnızca varsayılan
+    /// seçerken listelenir (bir kez açarken başlatılamazlar)
+    pub fn new(path: PathBuf, ctx: &egui::Context, open_once: bool) -> Chooser {
+        let data = spawn_load(ctx, move || {
+            let mime = crate::win::mime_of(&path).unwrap_or_default();
+            let (mut recommended, current) = crate::desktop_apps::apps_for(&mime);
+            let mut other: Vec<_> = crate::desktop_apps::installed_apps().into_iter().filter(|a| !recommended.iter().any(|r| r.id == a.id)).collect();
+            if open_once {
+                recommended.retain(|a| !a.terminal);
+                other.retain(|a| !a.terminal);
+            }
+            ChooserData { mime, current, recommended, other }
+        });
+        Chooser { data, selected: None, pos: None, synced: false, scroll_pending: false, icons: Default::default(), open_once, always: false }
+    }
+}
+
+#[cfg(not(windows))]
+pub enum ChooserEvent {
     None,
     Cancel,
-    Pick { id: String, mime: String },
+    Pick { id: String, mime: String, always: bool },
 }
 
-/// "Birlikte aç…" penceresi: dosya türü için varsayılan uygulamayı seçtirir (ayrı pencere)
+/// "Birlikte aç…" penceresi: dosya türü için varsayılan uygulamayı ya da dosyayı bir kez açacak
+/// uygulamayı seçtirir (ayrı pencere). `subject` varsayılan seçerken uzantı, açarken dosya adı.
 #[cfg(not(windows))]
-fn show_chooser(ch: &mut Chooser, ctx: &egui::Context, ext: &str) -> ChooserEvent {
+pub fn show_chooser(ch: &mut Chooser, ctx: &egui::Context, subject: &str) -> ChooserEvent {
     let mut event = ChooserEvent::None;
     let pos = *ch.pos.get_or_insert_with(|| centered_on_parent(ctx, CHOOSER_SIZE));
     let builder = dialog_builder(crate::i18n::t("Birlikte aç…"), CHOOSER_SIZE, pos);
@@ -924,17 +942,27 @@ fn show_chooser(ch: &mut Chooser, ctx: &egui::Context, ext: &str) -> ChooserEven
                         Loaded::Done(d) => d.mime.clone(),
                         Loaded::Pending => String::new(),
                     };
-                    if let Some(id) = ch.selected.clone().filter(|_| !mime.is_empty()) {
+                    // Türü bilinmeyen dosya yine de açılabilir; yalnızca varsayılan yapılamaz
+                    if let Some(id) = ch.selected.clone().filter(|_| ch.open_once || !mime.is_empty()) {
                         if ui.add(egui::Button::new(crate::i18n::t("Tamam")).min_size(size)).clicked() {
-                            event = ChooserEvent::Pick { id, mime };
+                            event = ChooserEvent::Pick { id, always: ch.always && !mime.is_empty(), mime: mime.clone() };
                         }
                     } else {
                         ui.add_enabled(false, egui::Button::new(crate::i18n::t("Tamam")).min_size(size));
                     }
+                    if ch.open_once {
+                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            ui.add_enabled(!mime.is_empty(), egui::Checkbox::new(&mut ch.always, crate::i18n::t("Her zaman bu uygulamayı kullan")));
+                        });
+                    }
                 });
             });
             egui::CentralPanel::default().frame(panel_frame(ui, 12)).show_inside(ui, |ui| {
-                ui.label(crate::i18n::tf("Bu dosya türü için varsayılan uygulamayı seçin: {}", &[&ext]));
+                if ch.open_once {
+                    ui.label(crate::i18n::tf("Bu dosyayı açmak için bir uygulama seçin: {}", &[&subject]));
+                } else {
+                    ui.label(crate::i18n::tf("Bu dosya türü için varsayılan uygulamayı seçin: {}", &[&subject]));
+                }
                 ui.add_space(6.0);
                 egui::Frame::group(ui.style()).show(ui, |ui| {
                     ui.set_width(ui.available_width());
@@ -986,7 +1014,7 @@ fn show_chooser(ch: &mut Chooser, ctx: &egui::Context, ext: &str) -> ChooserEven
                                     ch.selected = Some(a.id.clone());
                                 }
                                 if resp.double_clicked() {
-                                    event = ChooserEvent::Pick { id: a.id.clone(), mime: d.mime.clone() };
+                                    event = ChooserEvent::Pick { id: a.id.clone(), mime: d.mime.clone(), always: ch.always && !d.mime.is_empty() };
                                 }
                             }
                             ui.add_space(6.0);

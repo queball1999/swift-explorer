@@ -40,6 +40,7 @@ Releases after 0.2.0 also include `swift-explorer.flatpak`, which installs with 
 - Typing `cmd`, `powershell`, `pwsh` or `wt` in the address bar opens that terminal in the current folder, and `terminal` opens Windows Terminal. Press Ctrl+Shift+Enter instead of Enter to run it as administrator. On Linux, `terminal`, `cmd`, `powershell` and `pwsh` open your default terminal, and a terminal's name (`konsole`, `kitty`…) opens that one.
 - Copy, cut, paste and drag and drop work in both directions with Explorer and the desktop.
 - Shift + right-click opens the full Windows context menu, so 7-Zip, WinRAR and Send to are there.
+- Right-click > Open with lists the apps that can open the file, with the default one first. On Linux, "Choose another app…" lists every installed app and can make the choice the default.
 - Ctrl+Z undoes renames, moves, copies and deletes to the Recycle Bin.
 - Besides System, Light and Dark, View > Theme has Catppuccin, Gruvbox, Everforest, Nord, Dracula, Tokyo Night, Rosé Pine and Solarized.
 - A copy or move counts as done only after the files are written to the disk, like running `sync` in a terminal. Once the progress bar is gone, a USB stick can be pulled out. When moving to another drive, the originals are deleted only after that.
