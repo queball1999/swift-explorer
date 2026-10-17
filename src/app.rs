@@ -185,6 +185,8 @@ enum Action {
     Properties(PathBuf),
     ShowInExplorer(PathBuf),
     OpenWith(PathBuf),
+    /// "Birlikte aç" alt menüsünden seçilen uygulama (`openwith::Handler::id`)
+    OpenWithApp { id: String, path: PathBuf },
     ShellMenu { extended: bool },
     CalcSize,
     AddBookmark(PathBuf),
@@ -203,6 +205,9 @@ enum Dialog {
     Conflict { files: Vec<PathBuf>, dest: PathBuf, cut: bool, names: Vec<String> },
     Help,
     Properties(Box<crate::properties::Properties>),
+    /// Linux'ta "Başka bir uygulama seç…": uygulama listesi (Windows'ta sistemin penceresi açılır)
+    #[cfg(not(windows))]
+    OpenWith { paths: Vec<PathBuf>, subject: String, chooser: Box<crate::properties::Chooser> },
 }
 
 enum UndoOp {
@@ -1129,6 +1134,12 @@ impl App {
         &mut self.tabs[self.active]
     }
 
+    /// Bir öğe için istenen işlem: öğe seçiliyse tüm seçime, değilse yalnızca ona uygulanır
+    fn paths_for(&mut self, p: PathBuf) -> Vec<PathBuf> {
+        let paths = self.tab().selected_paths();
+        if paths.contains(&p) { paths } else { vec![p] }
+    }
+
     fn toast(&mut self, msg: impl Into<String>, error: bool) {
         self.toasts.push((msg.into(), Instant::now(), error));
     }
@@ -1681,10 +1692,7 @@ impl App {
             }
             Action::Properties(p) => {
                 // Seçili öğelerden biri için istendiyse hepsinin toplamı gösterilir
-                let mut paths = self.tab().selected_paths();
-                if !paths.contains(&p) {
-                    paths = vec![p];
-                }
+                let paths = self.paths_for(p);
                 let entry = self.tab().entries.iter().find(|e| paths.len() == 1 && e.path == paths[0]).cloned();
                 let tn = match entry {
                     Some(e) => type_name_cached(&mut self.type_names, &e),
@@ -1696,7 +1704,21 @@ impl App {
                 }
             }
             Action::ShowInExplorer(p) => win::show_in_explorer(&p),
+            #[cfg(windows)]
             Action::OpenWith(p) => win::open_with(&p),
+            #[cfg(not(windows))]
+            Action::OpenWith(p) => {
+                let subject = p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned());
+                let chooser = Box::new(crate::properties::Chooser::new(p.clone(), &ctx, true));
+                self.dialog = Dialog::OpenWith { paths: self.paths_for(p), subject, chooser };
+            }
+            Action::OpenWithApp { id, path } => {
+                let paths = self.paths_for(path);
+                if !crate::openwith::launch(&id, &paths) {
+                    let name = paths.first().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    self.toast(crate::i18n::tf("Açılamadı: {}", &[&name]), true);
+                }
+            }
             Action::ShellMenu { extended } => {
                 let mut paths = self.tab().selected_paths();
                 if paths.is_empty() && !self.tab().is_home() {
@@ -2941,11 +2963,10 @@ fn item_menu(ui: &mut egui::Ui, path: &Path, is_dir: bool, in_search: bool, acti
             actions.push(Action::PasteInto(path.to_path_buf()));
             ui.close_menu();
         }
-    } else {
-        if mi(ui, "🔀", crate::i18n::t("Birlikte aç…")) {
-            actions.push(Action::OpenWith(path.to_path_buf()));
-            ui.close_menu();
-        }
+    }
+    // Windows'ta klasörler için önerilen uygulama listesi yok; alt menü yalnızca dosyalarda
+    if !is_dir || cfg!(not(windows)) {
+        ui.menu_button(icon_label(ui, "🔀", None, crate::i18n::t("Birlikte aç")), |ui| open_with_menu(ui, path, is_dir, actions));
     }
     if in_search {
         if let Some(parent) = path.parent() {
@@ -3004,6 +3025,50 @@ fn item_menu(ui: &mut egui::Ui, path: &Path, is_dir: bool, in_search: bool, acti
         ui.separator();
         if mi(ui, "☰", crate::i18n::t("Daha fazla seçenek göster  Shift+F10")) {
             actions.push(Action::ShellMenu { extended: false });
+            ui.close_menu();
+        }
+    }
+}
+
+/// "Birlikte aç" alt menüsü: türü açan uygulamalar (varsayılan kalın ve başta), sonra
+/// "Başka bir uygulama seç…". Klasörlerde önce Swift Explorer (yeni sekme) ve terminal.
+fn open_with_menu(ui: &mut egui::Ui, path: &Path, is_dir: bool, actions: &mut Vec<Action>) {
+    ui.set_min_width(220.0);
+    if is_dir {
+        if mi(ui, "🗂", crate::APP_NAME) {
+            actions.push(Action::NewTab(path.to_path_buf()));
+            ui.close_menu();
+        }
+        if mi(ui, "⌨", crate::i18n::t("Terminal")) {
+            actions.push(Action::Terminal(path.to_path_buf()));
+            ui.close_menu();
+        }
+    }
+    let handlers = crate::openwith::handlers(ui.ctx(), path, is_dir);
+    match handlers.get() {
+        None => {
+            ui.label(RichText::new(crate::i18n::t("Yükleniyor…")).weak());
+        }
+        Some(list) => {
+            if is_dir && !list.is_empty() {
+                ui.separator();
+            }
+            for h in list {
+                let text = if h.default { RichText::new(&h.name).strong() } else { RichText::new(&h.name) };
+                // İkonu olmayan uygulamalar da aynı hizada dursun diye boş yer tutucu
+                let (tex, tint) = h.icon.as_ref().map_or((egui::TextureId::default(), Color32::TRANSPARENT), |t| (t.id(), Color32::WHITE));
+                let img = egui::Image::new(egui::load::SizedTexture::new(tex, [16.0, 16.0])).tint(tint);
+                if ui.add(egui::Button::image_and_text(img, text)).clicked() {
+                    actions.push(Action::OpenWithApp { id: h.id.clone(), path: path.to_path_buf() });
+                    ui.close_menu();
+                }
+            }
+        }
+    }
+    if !is_dir {
+        ui.separator();
+        if mi(ui, "🔀", crate::i18n::t("Başka bir uygulama seç…")) {
+            actions.push(Action::OpenWith(path.to_path_buf()));
             ui.close_menu();
         }
     }
@@ -3964,6 +4029,23 @@ impl App {
                 }
                 if let Some(e) = out.error {
                     self.toast(e, true);
+                }
+            }
+            #[cfg(not(windows))]
+            Dialog::OpenWith { paths, subject, chooser } => {
+                use crate::properties::ChooserEvent;
+                match crate::properties::show_chooser(chooser, ctx, subject) {
+                    ChooserEvent::None => {}
+                    ChooserEvent::Cancel => keep = false,
+                    ChooserEvent::Pick { id, mime, always } => {
+                        keep = false;
+                        if always && crate::desktop_apps::set_default(&id, &mime) {
+                            crate::openwith::invalidate();
+                        }
+                        if !crate::openwith::launch(&id, paths) {
+                            self.toast(crate::i18n::tf("Açılamadı: {}", &[&*subject]), true);
+                        }
+                    }
                 }
             }
             Dialog::Help => {

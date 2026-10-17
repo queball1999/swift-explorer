@@ -483,6 +483,11 @@ static TABLE: &[(&str, &str)] = &[
     ("Diğer uygulamalar", "Other apps"),
     ("Bu dosya türü için varsayılan uygulamayı seçin: {}", "Choose the default app for this file type: {}"),
     ("Yükleniyor…", "Loading…"),
+    ("Birlikte aç", "Open with"),
+    ("Başka bir uygulama seç…", "Choose another app…"),
+    ("Terminal", "Terminal"),
+    ("Bu dosyayı açmak için bir uygulama seçin: {}", "Choose an app to open this file: {}"),
+    ("Her zaman bu uygulamayı kullan", "Always use this app"),
 ];
 
 #[cfg(test)]

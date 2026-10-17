@@ -324,4 +324,9 @@ pub static TABLE: &[(&str, &str)] = &[
     ("Diğer uygulamalar", "Autres applications"),
     ("Bu dosya türü için varsayılan uygulamayı seçin: {}", "Choisissez l'application par défaut pour ce type de fichier : {}"),
     ("Yükleniyor…", "Chargement…"),
+    ("Birlikte aç", "Ouvrir avec"),
+    ("Başka bir uygulama seç…", "Choisir une autre application…"),
+    ("Terminal", "Terminal"),
+    ("Bu dosyayı açmak için bir uygulama seçin: {}", "Choisissez une application pour ouvrir ce fichier : {}"),
+    ("Her zaman bu uygulamayı kullan", "Toujours utiliser cette application"),
 ];
